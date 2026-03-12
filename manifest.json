@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "GitLab Auto Color Theme Sync",
+  "description": "Auto-syncs GitLab Color Theme and Syntax Highlighting Theme with the OS light/dark mode.",
+  "version": "1.0.0",
+  "permissions": ["storage", "tabs", "scripting"],
+  "host_permissions": ["https://*/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_page": "options.html",
+  "action": {
+    "default_title": "GitLab Auto Color"
+  }
+}
