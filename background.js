@@ -8,46 +8,74 @@ let applying = false;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function normalizeDomain(input) {
+  const raw = (input || '').trim();
+  if (!raw) return DEFAULT_DOMAIN;
+
+  try {
+    const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    return new URL(withProtocol).hostname;
+  } catch {
+    return raw
+      .replace(/^https?:\/\//i, '')
+      .replace(/\/.*$/, '')
+      .trim() || DEFAULT_DOMAIN;
+  }
+}
+
 async function getDomain() {
   const stored = await chrome.storage.sync.get(DOMAIN_KEY);
-  return (stored[DOMAIN_KEY] || DEFAULT_DOMAIN).trim();
+  return normalizeDomain(stored[DOMAIN_KEY] || DEFAULT_DOMAIN);
 }
 
 async function registerContentScripts(domain) {
-  try {
-    const existing = await chrome.scripting.getRegisteredContentScripts();
-    if (existing.length > 0) {
-      await chrome.scripting.unregisterContentScripts({ ids: existing.map((s) => s.id) });
-    }
-  } catch (_) {}
-  await chrome.scripting.registerContentScripts([
+  const normalizedDomain = normalizeDomain(domain);
+  const scripts = [
     {
       id: 'gitlab-auto-color-logger',
-      matches: [`https://${domain}/*`],
+      matches: [`https://${normalizedDomain}/*`],
       js: ['logger.js'],
       runAt: 'document_start',
     },
     {
       id: 'gitlab-auto-color-preferences',
-      matches: [`https://${domain}/-/profile/preferences*`],
+      matches: [`https://${normalizedDomain}/-/profile/preferences*`],
       js: ['content.js'],
       runAt: 'document_idle',
     },
-  ]);
-  logInfo(`content scripts registered for domain: ${domain}`);
+  ];
+  try {
+    const existing = await chrome.scripting.getRegisteredContentScripts();
+    const existingIds = new Set(existing.map((s) => s.id));
+    const toUpdate = scripts.filter((s) => existingIds.has(s.id));
+    const toRegister = scripts.filter((s) => !existingIds.has(s.id));
+    if (toUpdate.length > 0) await chrome.scripting.updateContentScripts(toUpdate);
+    if (toRegister.length > 0) await chrome.scripting.registerContentScripts(toRegister);
+  } catch (e) {
+    if (e.message && e.message.includes('Duplicate script ID')) {
+      // Race condition: already registered between check and register, update instead
+      await chrome.scripting.updateContentScripts(scripts).catch(() => {});
+    } else {
+      throw e;
+    }
+  }
+  logInfo(`content scripts registered for domain: ${normalizedDomain}`);
+}
+
+async function ensureContentScriptsRegistered() {
+  const domain = await getDomain();
+  await registerContentScripts(domain);
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-  getDomain().then(registerContentScripts).catch((e) => console.error(e));
+  ensureContentScriptsRegistered().catch((e) => console.error(e));
 });
 
 chrome.runtime.onStartup.addListener(async () => {
-  const existing = await chrome.scripting.getRegisteredContentScripts().catch(() => []);
-  if (existing.length === 0) {
-    const domain = await getDomain();
-    await registerContentScripts(domain).catch((e) => console.error(e));
-  }
+  await ensureContentScriptsRegistered().catch((e) => console.error(e));
 });
+
+ensureContentScriptsRegistered().catch((e) => console.error(e));
 
 function logInfo(message, extra) {
   if (typeof extra === 'undefined') {
@@ -128,8 +156,8 @@ async function applyThemeByMode(mode) {
     const result = await sendApplyMessageWithRetry(tabId, mode, 30);
     logInfo('apply result from preferences page', result);
 
-    const domain = await reloadGitLabTabs();
-    logInfo(`reloaded ${domain} tabs to reflect updated theme`);
+    const reloadedDomain = await reloadGitLabTabs();
+    logInfo(`reloaded ${reloadedDomain} tabs to reflect updated theme`);
   } catch (error) {
     console.error(`${LOG_PREFIX} apply failed`, error);
   } finally {

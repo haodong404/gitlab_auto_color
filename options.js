@@ -14,6 +14,21 @@ const DEFAULT_PRESET = {
   autoSave: true
 };
 
+function normalizeDomain(input) {
+  const raw = (input || '').trim();
+  if (!raw) return DEFAULT_DOMAIN;
+
+  try {
+    const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    return new URL(withProtocol).hostname;
+  } catch {
+    return raw
+      .replace(/^https?:\/\//i, '')
+      .replace(/\/.*$/, '')
+      .trim() || DEFAULT_DOMAIN;
+  }
+}
+
 function mergePreset(saved) {
   return {
     dark: {
@@ -38,7 +53,7 @@ async function loadToForm() {
   const stored = await chrome.storage.sync.get([STORAGE_KEY, DOMAIN_KEY]);
   const preset = mergePreset(stored[STORAGE_KEY]);
 
-  document.getElementById('gitlabDomain').value = stored[DOMAIN_KEY] || DEFAULT_DOMAIN;
+  document.getElementById('gitlabDomain').value = normalizeDomain(stored[DOMAIN_KEY] || DEFAULT_DOMAIN);
   document.getElementById('darkColorTheme').value = preset.dark.colorTheme || '';
   document.getElementById('darkSyntaxTheme').value = preset.dark.syntaxTheme || '';
   document.getElementById('lightColorTheme').value = preset.light.colorTheme || '';
@@ -47,7 +62,7 @@ async function loadToForm() {
 }
 
 async function saveFromForm() {
-  const domain = document.getElementById('gitlabDomain').value.trim() || DEFAULT_DOMAIN;
+  const domain = normalizeDomain(document.getElementById('gitlabDomain').value);
   const preset = {
     dark: {
       colorTheme: document.getElementById('darkColorTheme').value.trim(),
@@ -61,9 +76,10 @@ async function saveFromForm() {
   };
 
   const prevData = await chrome.storage.sync.get(DOMAIN_KEY);
-  const prevDomain = prevData[DOMAIN_KEY] || DEFAULT_DOMAIN;
+  const prevDomain = normalizeDomain(prevData[DOMAIN_KEY] || DEFAULT_DOMAIN);
 
   await chrome.storage.sync.set({ [STORAGE_KEY]: preset, [DOMAIN_KEY]: domain });
+  document.getElementById('gitlabDomain').value = domain;
 
   if (domain !== prevDomain) {
     await chrome.runtime.sendMessage({ type: 'domainChanged', domain }).catch(() => null);
@@ -75,7 +91,7 @@ async function saveFromForm() {
 
 async function applyNow() {
   const stored = await chrome.storage.sync.get(DOMAIN_KEY);
-  const domain = stored[DOMAIN_KEY] || DEFAULT_DOMAIN;
+  const domain = normalizeDomain(stored[DOMAIN_KEY] || DEFAULT_DOMAIN);
   const tabs = await chrome.tabs.query({
     url: [`https://${domain}/-/profile/preferences*`]
   });
